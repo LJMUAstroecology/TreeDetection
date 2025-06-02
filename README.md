@@ -26,6 +26,12 @@ This tool is designed to handle large TIFF images by breaking them down into man
 
 ## Installation
 
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/LJMUAstroecology/image_slicer.git
+   cd image_slicer
+   ```
+
 ### Using Conda
 
 1. Create a new conda environment:
