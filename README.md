@@ -24,6 +24,25 @@ This tool is designed to handle large TIFF images by breaking them down into man
   - tifffile
   - matplotlib
 
+## Installation
+
+### Using Conda
+
+1. Create a new conda environment:
+   ```bash
+   conda create -n image_slicer python=3.9
+   ```
+
+2. Activate the environment:
+   ```bash
+   conda activate image_slicer
+   ```
+
+3. Install the required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
 ## Usage
 
 The main script `EndToEnd.py` provides a complete pipeline for image processing:
