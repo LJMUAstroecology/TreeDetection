@@ -1,4 +1,4 @@
-# Image Slicer
+# TreeDetection
 
 A Python tool for processing large TIFF images by slicing them into smaller tiles, processing them, and stitching them back together while preserving metadata.
 
@@ -28,20 +28,20 @@ This tool is designed to handle large TIFF images by breaking them down into man
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/LJMUAstroecology/image_slicer.git
-   cd image_slicer
+   git clone https://github.com/LJMUAstroecology/TreeDetection.git
+   cd TreeDetection
    ```
 
 ### Using Conda
 
 1. Create a new conda environment:
    ```bash
-   conda create -n image_slicer python=3.9
+   conda create -n TreeDetection python=3.9
    ```
 
 2. Activate the environment:
    ```bash
-   conda activate image_slicer
+   conda activate TreeDetection
    ```
 
 3. Install the required packages:
