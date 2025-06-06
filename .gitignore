@@ -1,0 +1,7 @@
+*__pycache__
+*.pyc
+outputs/
+*.tif
+*.tiff
+uploads/
+yolov8n.pt
