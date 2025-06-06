@@ -130,31 +130,48 @@ def stitch_images_to_tiff(input_dir, output_path, original_tiff_path, tile_size,
     tifffile.imwrite(output_path, stitched_array, metadata=original_meta)
 
 
-# Define paths
-original_tiff_path = '/Users/astslong/data/ortho_data/morarano/morarano2y1_ort1.tif'  # Path to the original TIFF file
-sliced_dir = 'Sliced_Images'  # Directory to save sliced images
-detected_dir = 'Detected_Images'  # Directory to save images with detections
-output_tiff_path = 'stitched_output.tiff'  # Output stitched TIFF file path
+def run_end_to_end(
+    original_tiff_path,
+    sliced_dir='Sliced_Images',
+    detected_dir='Detected_Images',
+    output_tiff_path='stitched_output.tiff',
+    tile_size=(1026, 1824),
+    strides=(926, 1724),
+    padding=False
+):
+    # Slicing
+    slicer = ImageSlicer(original_tiff_path, size=tile_size, strides=strides, padding=padding)
+    transformed_images = slicer.transform()
 
-# Slicing
-slicer = ImageSlicer(original_tiff_path, size=(1026, 1824), strides=(926, 1724), padding=False)
-transformed_images = slicer.transform()
+    # Save sliced images
+    if not os.path.exists(sliced_dir):
+        os.makedirs(sliced_dir)
+    for i, images in enumerate(transformed_images['0']):
+        img, row, col = images
+        Image.fromarray(img).save(os.path.join(sliced_dir, f'image_{row}_{col}.png'))
 
-# Save sliced images
-if not os.path.exists(sliced_dir):
-    os.makedirs(sliced_dir)
-for i, images in enumerate(transformed_images['0']):
-    img, row, col = images
-    Image.fromarray(img).save(os.path.join(sliced_dir, f'image_{row}_{col}.png'))
+    # Inject fake detections
+    if not os.path.exists(detected_dir):
+        os.makedirs(detected_dir)
+    for img_name in os.listdir(sliced_dir):
+        if is_valid_filename(img_name):
+            inject_fake_detections(os.path.join(sliced_dir, img_name), os.path.join(detected_dir, img_name))
 
-# Inject fake detections
-if not os.path.exists(detected_dir):
-    os.makedirs(detected_dir)
-for img_name in os.listdir(sliced_dir):
-    if is_valid_filename(img_name):
-        inject_fake_detections(os.path.join(sliced_dir, img_name), os.path.join(detected_dir, img_name))
+    # Stitch the images back into a TIFF
+    stitch_images_to_tiff(detected_dir, output_tiff_path, original_tiff_path, tile_size=tile_size, strides=strides)
 
-# Stitch the images back into a TIFF
-stitch_images_to_tiff(detected_dir, output_tiff_path, original_tiff_path, tile_size=(1026, 1824), strides=(926, 1724))
+    print("End-to-end process complete. Output saved to", output_tiff_path)
 
-print("End-to-end process complete. Output saved to", output_tiff_path)
+
+# Move the script execution code under this guard
+if __name__ == "__main__":
+    # Example usage with hardcoded paths
+    run_end_to_end(
+        original_tiff_path='/Users/astslong/data/ortho_data/morarano/morarano2y1_ort1.tif',
+        sliced_dir='Sliced_Images',
+        detected_dir='Detected_Images',
+        output_tiff_path='stitched_output.tiff',
+        tile_size=(1026, 1824),
+        strides=(926, 1724),
+        padding=False
+    )
