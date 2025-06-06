@@ -111,6 +111,6 @@ stitch_images_to_tiff(detected_dir, output_tiff_path, original_tiff_path,
 - The stitching process preserves the original TIFF metadata
 - Make sure to have sufficient disk space for the intermediate files
 
-## License: TBD
+## License: TBb
 
 
