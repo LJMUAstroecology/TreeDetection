@@ -3,6 +3,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 import tifffile
 import matplotlib.pyplot as plt
+import rasterio
+from rasterio.windows import Window
+from rasterio.transform import Affine
+from flask import Flask, request, render_template
 
 class ImageSlicer:
     def __init__(self, source, size, strides, padding=False):
@@ -67,111 +71,188 @@ class ImageSlicer:
                 plt.imsave(os.path.join(save_dir, f'{filename}_{row}_{col}.png'), img)
 
 def inject_fake_detections(image_path, output_path):
-    img = Image.open(image_path)
-    draw = ImageDraw.Draw(img)
+    # This version works for TIFFs using rasterio to preserve georeferencing
+    with rasterio.open(image_path) as src:
+        data = src.read()
+        meta = src.meta.copy()
 
-    # Generate random box coordinates
-    for _ in range(5):  # Inject 5 random boxes
-        x1 = np.random.randint(0, img.width - 50)
-        y1 = np.random.randint(0, img.height - 50)
+    # Draw fake detections on the first band (for demonstration)
+    # If RGB, operate on all bands
+    img = np.moveaxis(data, 0, -1)  # (bands, H, W) -> (H, W, bands)
+    pil_img = Image.fromarray(img.astype(np.uint8))
+    draw = ImageDraw.Draw(pil_img)
+    for _ in range(5):
+        x1 = np.random.randint(0, pil_img.width - 50)
+        y1 = np.random.randint(0, pil_img.height - 50)
         x2 = x1 + np.random.randint(20, 50)
         y2 = y1 + np.random.randint(20, 50)
         draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+    img_with_boxes = np.array(pil_img)
+    # Move axis back to (bands, H, W)
+    if img_with_boxes.ndim == 3:
+        data_out = np.moveaxis(img_with_boxes, -1, 0)
+    else:
+        data_out = img_with_boxes[np.newaxis, ...]
+    with rasterio.open(output_path, "w", **meta) as dst:
+        dst.write(data_out.astype(meta['dtype']))
 
-    img.save(output_path)
-
-def is_valid_filename(filename):
-    parts = filename.split('_')
-    if len(parts) != 3:
+def is_valid_tiff_filename(filename):
+    # Accepts tile_{row}_{col}.tif or .tiff
+    if not (filename.endswith('.tif') or filename.endswith('.tiff')):
         return False
-    if not parts[0] == 'image':
+    parts = filename.replace('.tiff', '').replace('.tif', '').split('_')
+    if len(parts) != 3 or not parts[0] == 'tile':
         return False
     try:
         int(parts[1])
-        int(parts[2].split('.')[0])
+        int(parts[2])
     except ValueError:
         return False
     return True
 
+def slice_geotiff_to_tiffs(input_path, output_dir, tile_width, tile_height):
+    os.makedirs(output_dir, exist_ok=True)
+    with rasterio.open(input_path) as src:
+        meta = src.meta.copy()
+        for i in range(0, src.height, tile_height):
+            for j in range(0, src.width, tile_width):
+                window = Window(j, i, tile_width, tile_height)
+                transform = rasterio.windows.transform(window, src.transform)
+                win_width = min(tile_width, src.width - j)
+                win_height = min(tile_height, src.height - i)
+                meta.update({
+                    "height": win_height,
+                    "width": win_width,
+                    "transform": transform
+                })
+                tile = src.read(window=window, out_shape=(src.count, win_height, win_width))
+                out_path = os.path.join(output_dir, f"tile_{i}_{j}.tif")
+                with rasterio.open(out_path, "w", **meta) as dst:
+                    dst.write(tile)
 
-def stitch_images_to_tiff(input_dir, output_path, original_tiff_path, tile_size, strides):
-    # Load the original TIFF to get metadata and shape
-    with tifffile.TiffFile(original_tiff_path) as tif:
-        original_meta = {tag.name: tag.value for tag in tif.pages[0].tags.values()}
-        original_image = tif.asarray()
+def stitch_tiff_tiles(input_dir, output_path):
+    # Gather all tile filenames
+    tile_files = [f for f in os.listdir(input_dir) if is_valid_tiff_filename(f)]
+    if not tile_files:
+        raise ValueError("No TIFF tiles found in the directory.")
 
-    # Create a blank image with the same shape as the original
-    stitched_image = Image.new('RGB', (original_image.shape[1], original_image.shape[0]))
+    # Parse row and col from filenames
+    tile_info = []
+    for fname in tile_files:
+        parts = fname.replace('.tif', '').replace('.tiff', '').split('_')
+        row, col = int(parts[1]), int(parts[2])
+        tile_info.append((row, col, fname))
+    tile_info.sort()  # Sort by row, then col
 
-    # List all processed PNG images
-    images = [img for img in os.listdir(input_dir) if img.endswith('.png') and is_valid_filename(img)]
+    # Open first tile to get metadata
+    first_tile_path = os.path.join(input_dir, tile_info[0][2])
+    with rasterio.open(first_tile_path) as src:
+        meta = src.meta.copy()
+        tile_height, tile_width = src.height, src.width
+        dtype = src.dtypes[0]
+        count = src.count
+        crs = src.crs
+        base_transform = src.transform
 
-    # Ensure correct sorting of filenames
-    try:
-        images.sort(key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2].split('.')[0])))
-    except ValueError as e:
-        print("Error while sorting filenames:", e)
-        for img in images:
-            try:
-                print("Filename parts:", img.split('_')[1], img.split('_')[2].split('.')[0])
-            except Exception as ex:
-                print("Error parsing filename:", img, ex)
-        raise
+    # Find max extents by reading each tile's size
+    max_bottom = max_right = 0
+    for row, col, fname in tile_info:
+        with rasterio.open(os.path.join(input_dir, fname)) as src:
+            bottom = row + src.height
+            right = col + src.width
+            max_bottom = max(max_bottom, bottom)
+            max_right = max(max_right, right)
+    out_height = max_bottom
+    out_width = max_right
 
-    for img_name in images:
-        row, col = map(lambda x: int(x.split('.')[0]), img_name.split('_')[1:])
-        img_path = os.path.join(input_dir, img_name)
-        img = Image.open(img_path)
+    # Prepare output array
+    stitched = np.zeros((count, out_height, out_width), dtype=dtype)
 
-        stitched_image.paste(img, (col, row))
+    # Write each tile into the output array
+    for row, col, fname in tile_info:
+        with rasterio.open(os.path.join(input_dir, fname)) as src:
+            data = src.read()
+            h, w = src.height, src.width
+            stitched[:, row:row+h, col:col+w] = data
 
-    # Save the stitched image with original metadata
-    stitched_array = np.array(stitched_image)
-    tifffile.imwrite(output_path, stitched_array, metadata=original_meta)
+    # Update transform for the stitched raster
+    meta.update({
+        "height": out_height,
+        "width": out_width,
+        "transform": Affine(base_transform.a, base_transform.b, base_transform.c,
+                            base_transform.d, base_transform.e, base_transform.f),
+        "crs": crs
+    })
 
+    # Write stitched raster
+    with rasterio.open(output_path, "w", **meta) as dst:
+        dst.write(stitched)
+
+    print(f"Stitched TIFF saved to {output_path}")
 
 def run_end_to_end(
     original_tiff_path,
     sliced_dir='Sliced_Images',
     detected_dir='Detected_Images',
     output_tiff_path='stitched_output.tiff',
-    tile_size=(1026, 1824),
-    strides=(926, 1724),
-    padding=False
+    tile_size=(1026, 1824)
 ):
-    # Slicing
-    slicer = ImageSlicer(original_tiff_path, size=tile_size, strides=strides, padding=padding)
-    transformed_images = slicer.transform()
+    # 1. Slice TIFF directly into TIFF tiles
+    slice_geotiff_to_tiffs(
+        input_path=original_tiff_path,
+        output_dir=sliced_dir,
+        tile_width=tile_size[1],  # width (columns)
+        tile_height=tile_size[0]  # height (rows)
+    )
 
-    # Save sliced images
-    if not os.path.exists(sliced_dir):
-        os.makedirs(sliced_dir)
-    for i, images in enumerate(transformed_images['0']):
-        img, row, col = images
-        Image.fromarray(img).save(os.path.join(sliced_dir, f'image_{row}_{col}.png'))
-
-    # Inject fake detections
+    # 2. Inject fake detections into each TIFF tile and save to detected_dir
     if not os.path.exists(detected_dir):
         os.makedirs(detected_dir)
     for img_name in os.listdir(sliced_dir):
-        if is_valid_filename(img_name):
+        if is_valid_tiff_filename(img_name):
             inject_fake_detections(os.path.join(sliced_dir, img_name), os.path.join(detected_dir, img_name))
 
-    # Stitch the images back into a TIFF
-    stitch_images_to_tiff(detected_dir, output_tiff_path, original_tiff_path, tile_size=tile_size, strides=strides)
+    # 3. Stitch the TIFF tiles back into a single TIFF
+    stitch_tiff_tiles(detected_dir, output_tiff_path)
 
     print("End-to-end process complete. Output saved to", output_tiff_path)
 
+app = Flask(__name__)
 
-# Move the script execution code under this guard
-if __name__ == "__main__":
-    # Example usage with hardcoded paths
-    run_end_to_end(
-        original_tiff_path='/Users/astslong/data/ortho_data/morarano/morarano2y1_ort1.tif',
-        sliced_dir='Sliced_Images',
-        detected_dir='Detected_Images',
-        output_tiff_path='stitched_output.tiff',
-        tile_size=(1026, 1824),
-        strides=(926, 1724),
-        padding=False
-    )
+UPLOAD_FOLDER = 'uploads'
+OUTPUT_FOLDER = 'outputs'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+@app.route('/', methods=['GET', 'POST'])
+def upload_file():
+    if request.method == 'POST':
+        file = request.files['file']
+        if file:
+            input_path = os.path.join(UPLOAD_FOLDER, file.filename)
+            file.save(input_path)
+
+            output_path = os.path.join(OUTPUT_FOLDER, 'stitched_output.tiff')
+            run_end_to_end(
+                original_tiff_path=input_path,
+                sliced_dir='Sliced_Images',
+                detected_dir='Detected_Images',
+                output_tiff_path=output_path,
+                tile_size=(1026, 1824)
+            )
+
+            output_filename = os.path.basename(output_path)
+            return f"Processing complete. Output saved to {output_filename}"
+
+    return '''
+    <!doctype html>
+    <title>Upload TIFF</title>
+    <h1>Upload a TIFF file</h1>
+    <form method=post enctype=multipart/form-data>
+      <input type=file name=file>
+      <input type=submit value=Upload>
+    </form>
+    '''
+
+if __name__ == '__main__':
+    app.run(debug=True)
