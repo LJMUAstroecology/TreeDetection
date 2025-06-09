@@ -5,3 +5,4 @@ outputs/
 *.tiff
 uploads/
 yolov8n.pt
+stitched_output.tiff.aux.xml
