@@ -1,6 +1,7 @@
 from flask import Flask, request, send_from_directory
 import os
 from EndToEnd import run_end_to_end
+import zipfile
 
 app = Flask(__name__)
 
@@ -8,6 +9,17 @@ UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'outputs'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+def zip_shapefile(output_folder, base_name, zip_name):
+    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
+    zip_path = os.path.join(output_folder, zip_name)
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for ext in exts:
+            fname = f"{base_name}.{ext}"
+            fpath = os.path.join(output_folder, fname)
+            if os.path.exists(fpath):
+                zipf.write(fpath, fname)
+    return zip_path
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
@@ -53,13 +65,9 @@ def download_file(filename):
 def download_shapefile():
     # Shapefile consists of several files with the same basename
     base = 'bboxes_merged'
-    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
-    links = []
-    for ext in exts:
-        fname = f"{base}.{ext}"
-        if os.path.exists(os.path.join(OUTPUT_FOLDER, fname)):
-            links.append(f'<a href="/download/{fname}">{fname}</a>')
-    return "<br>".join(links)
+    zip_filename = f"{base}.zip"
+    zip_path = zip_shapefile(OUTPUT_FOLDER, base, zip_filename)
+    return send_from_directory(OUTPUT_FOLDER, zip_filename, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True)
