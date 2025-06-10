@@ -309,13 +309,6 @@ def bboxes_json_to_shapefile(json_path, stitched_tiff_path, shapefile_path):
                 }
             })
 
-# Example usage after your pipeline:
-# bboxes_json_to_shapefile(
-#     json_path="Detected_Images/detections_gps.json",
-#     stitched_tiff_path="outputs/stitched_output.tiff",
-#     shapefile_path="outputs/bboxes_merged.shp"
-# )
-
 app = Flask(__name__)
 
 UPLOAD_FOLDER = 'uploads'
@@ -351,7 +344,12 @@ def upload_file():
             # ---------------------------------------------------
 
             output_filename = os.path.basename(output_path)
-            return f"Processing complete. Output saved to {output_filename}. Shapefile saved to {shp_path}"
+            return f"""
+            Processing complete.<br>
+            Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
+            Shapefile components:<br>
+            <a href='/download_shapefile'>Download Shapefile (all parts)</a>
+            """
 
     return '''
     <!doctype html>
