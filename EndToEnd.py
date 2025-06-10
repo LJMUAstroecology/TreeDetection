@@ -5,8 +5,10 @@ import tifffile
 import matplotlib.pyplot as plt
 import rasterio
 from rasterio.windows import Window
-from rasterio.transform import Affine
+from rasterio.transform import Affine, xy
 from flask import Flask, request, render_template
+import json
+import csv
 
 class ImageSlicer:
     def __init__(self, source, size, strides, padding=False):
@@ -75,18 +77,32 @@ def inject_fake_detections(image_path, output_path):
     with rasterio.open(image_path) as src:
         data = src.read()
         meta = src.meta.copy()
+        transform = src.transform
 
-    # Draw fake detections on the first band (for demonstration)
-    # If RGB, operate on all bands
     img = np.moveaxis(data, 0, -1)  # (bands, H, W) -> (H, W, bands)
     pil_img = Image.fromarray(img.astype(np.uint8))
     draw = ImageDraw.Draw(pil_img)
+    bbox_gps_list = []
     for _ in range(5):
         x1 = np.random.randint(0, pil_img.width - 50)
         y1 = np.random.randint(0, pil_img.height - 50)
         x2 = x1 + np.random.randint(20, 50)
         y2 = y1 + np.random.randint(20, 50)
         draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+
+        # Convert pixel coordinates to geospatial coordinates
+        top_left = xy(transform, y1, x1)
+        bottom_right = xy(transform, y2, x2)
+        bbox_gps = {
+            "image": os.path.basename(image_path),
+            "pixel_bbox": [x1, y1, x2, y2],
+            "gps_bbox": {
+                "top_left": top_left,
+                "bottom_right": bottom_right
+            }
+        }
+        bbox_gps_list.append(bbox_gps)
+
     img_with_boxes = np.array(pil_img)
     # Move axis back to (bands, H, W)
     if img_with_boxes.ndim == 3:
@@ -95,6 +111,8 @@ def inject_fake_detections(image_path, output_path):
         data_out = img_with_boxes[np.newaxis, ...]
     with rasterio.open(output_path, "w", **meta) as dst:
         dst.write(data_out.astype(meta['dtype']))
+
+    return bbox_gps_list
 
 def is_valid_tiff_filename(filename):
     # Accepts tile_{row}_{col}.tif or .tiff
@@ -173,6 +191,14 @@ def stitch_tiff_tiles(input_dir, output_path):
         with rasterio.open(os.path.join(input_dir, fname)) as src:
             data = src.read()
             h, w = src.height, src.width
+            # Ensure band count matches
+            if data.shape[0] > count:
+                # More bands than expected, drop extras (e.g., drop alpha)
+                data = data[:count, :, :]
+            elif data.shape[0] < count:
+                # Fewer bands, pad with zeros
+                pad_shape = (count - data.shape[0], h, w)
+                data = np.concatenate([data, np.zeros(pad_shape, dtype=data.dtype)], axis=0)
             stitched[:, row:row+h, col:col+w] = data
 
     # Update transform for the stitched raster
@@ -208,9 +234,33 @@ def run_end_to_end(
     # 2. Inject fake detections into each TIFF tile and save to detected_dir
     if not os.path.exists(detected_dir):
         os.makedirs(detected_dir)
+    all_bboxes = []
     for img_name in os.listdir(sliced_dir):
         if is_valid_tiff_filename(img_name):
-            inject_fake_detections(os.path.join(sliced_dir, img_name), os.path.join(detected_dir, img_name))
+            bboxes = inject_fake_detections(
+                os.path.join(sliced_dir, img_name),
+                os.path.join(detected_dir, img_name)
+            )
+            all_bboxes.extend(bboxes)
+
+    # Save all bounding box info to JSON
+    with open(os.path.join(detected_dir, "detections_gps.json"), "w") as f:
+        json.dump(all_bboxes, f, indent=2)
+
+    # Save all bounding box info to CSV with unique IDs
+    csv_path = os.path.join(detected_dir, "detections_gps.csv")
+    with open(csv_path, "w", newline="") as csvfile:
+        fieldnames = ["id", "image", "pixel_bbox", "gps_top_left", "gps_bottom_right"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for idx, bbox in enumerate(all_bboxes, 1):
+            writer.writerow({
+                "id": idx,
+                "image": bbox["image"],
+                "pixel_bbox": bbox["pixel_bbox"],
+                "gps_top_left": bbox["gps_bbox"]["top_left"],
+                "gps_bottom_right": bbox["gps_bbox"]["bottom_right"]
+            })
 
     # 3. Stitch the TIFF tiles back into a single TIFF
     stitch_tiff_tiles(detected_dir, output_tiff_path)
