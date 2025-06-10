@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 import os
 from EndToEnd import run_end_to_end
 
@@ -28,7 +28,12 @@ def upload_file():
             )
 
             output_filename = os.path.basename(output_path)
-            return f"Processing complete. Output saved to {output_filename}"
+            return f"""
+            Processing complete.<br>
+            Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
+            Shapefile components:<br>
+            <a href='/download_shapefile'>Download Shapefile (all parts)</a>
+            """
 
     return '''
     <!doctype html>
@@ -39,6 +44,22 @@ def upload_file():
       <input type=submit value=Upload>
     </form>
     '''
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
+
+@app.route('/download_shapefile')
+def download_shapefile():
+    # Shapefile consists of several files with the same basename
+    base = 'bboxes_merged'
+    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
+    links = []
+    for ext in exts:
+        fname = f"{base}.{ext}"
+        if os.path.exists(os.path.join(OUTPUT_FOLDER, fname)):
+            links.append(f'<a href="/download/{fname}">{fname}</a>')
+    return "<br>".join(links)
 
 if __name__ == '__main__':
     app.run(debug=True)

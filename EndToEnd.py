@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import rasterio
 from rasterio.windows import Window
 from rasterio.transform import Affine, xy
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, send_from_directory
 import json
 import csv
 import fiona
@@ -362,6 +362,22 @@ def upload_file():
       <input type=submit value=Upload>
     </form>
     '''
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
+
+@app.route('/download_shapefile')
+def download_shapefile():
+    # Shapefile consists of several files with the same basename
+    base = 'bboxes_merged'
+    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
+    links = []
+    for ext in exts:
+        fname = f"{base}.{ext}"
+        if os.path.exists(os.path.join(OUTPUT_FOLDER, fname)):
+            links.append(f'<a href="/download/{fname}">{fname}</a>')
+    return "<br>".join(links)
 
 if __name__ == '__main__':
     app.run(debug=True)
