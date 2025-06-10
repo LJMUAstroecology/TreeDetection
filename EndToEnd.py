@@ -9,6 +9,8 @@ from rasterio.transform import Affine, xy
 from flask import Flask, request, render_template
 import json
 import csv
+import fiona
+from shapely.geometry import box, mapping
 
 class ImageSlicer:
     def __init__(self, source, size, strides, padding=False):
@@ -267,6 +269,53 @@ def run_end_to_end(
 
     print("End-to-end process complete. Output saved to", output_tiff_path)
 
+def bboxes_json_to_shapefile(json_path, stitched_tiff_path, shapefile_path):
+    # Get CRS from stitched TIFF
+    import rasterio
+    with rasterio.open(stitched_tiff_path) as src:
+        crs = src.crs.to_wkt()
+
+    # Load bounding boxes from JSON
+    with open(json_path, "r") as f:
+        bboxes = json.load(f)
+
+    # Define schema for shapefile
+    schema = {
+        'geometry': 'Polygon',
+        'properties': {
+            'id': 'int',
+            'image': 'str'
+        }
+    }
+
+    with fiona.open(
+        shapefile_path, 'w',
+        driver='ESRI Shapefile',
+        crs=crs,
+        schema=schema
+    ) as shp:
+        for idx, bbox in enumerate(bboxes, 1):
+            # Get GPS coordinates for the bounding box corners
+            top_left = bbox["gps_bbox"]["top_left"]
+            bottom_right = bbox["gps_bbox"]["bottom_right"]
+            minx, maxy = top_left
+            maxx, miny = bottom_right
+            polygon = box(minx, miny, maxx, maxy)
+            shp.write({
+                'geometry': mapping(polygon),
+                'properties': {
+                    'id': idx,
+                    'image': bbox["image"]
+                }
+            })
+
+# Example usage after your pipeline:
+# bboxes_json_to_shapefile(
+#     json_path="Detected_Images/detections_gps.json",
+#     stitched_tiff_path="outputs/stitched_output.tiff",
+#     shapefile_path="outputs/bboxes_merged.shp"
+# )
+
 app = Flask(__name__)
 
 UPLOAD_FOLDER = 'uploads'
@@ -291,8 +340,18 @@ def upload_file():
                 tile_size=(1026, 1824)
             )
 
+            # --- Generate the shapefile and save to outputs ---
+            json_path = os.path.join('Detected_Images', 'detections_gps.json')
+            shp_path = os.path.join(OUTPUT_FOLDER, 'bboxes_merged.shp')
+            bboxes_json_to_shapefile(
+                json_path=json_path,
+                stitched_tiff_path=output_path,
+                shapefile_path=shp_path
+            )
+            # ---------------------------------------------------
+
             output_filename = os.path.basename(output_path)
-            return f"Processing complete. Output saved to {output_filename}"
+            return f"Processing complete. Output saved to {output_filename}. Shapefile saved to {shp_path}"
 
     return '''
     <!doctype html>
