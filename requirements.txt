@@ -4,4 +4,7 @@ tifffile>=2021.7.2
 matplotlib>=3.4.0 
 rasterio>=1.2.6
 flask>=2.0.1
-
+json >=2.0.9
+csv.json  
+fiona>=1.8.20
+shapely>=1.7.1
