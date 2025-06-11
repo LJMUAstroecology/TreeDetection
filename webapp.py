@@ -43,8 +43,7 @@ def upload_file():
             return f"""
             Processing complete.<br>
             Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
-            Shapefile components:<br>
-            <a href='/download_shapefile'>Download Shapefile (all parts)</a>
+            Shapefile: <a href='/download_shapefile_zip'>Download All Shapefile Components (ZIP)</a>
             """
 
     return '''
