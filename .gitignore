@@ -6,3 +6,7 @@ outputs/
 uploads/
 yolov8n.pt
 stitched_output.tiff.aux.xml
+Detected_images/
+Sliced_images/
+sliced_tiles/
+
