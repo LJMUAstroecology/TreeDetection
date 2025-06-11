@@ -29,17 +29,19 @@ def upload_file():
             input_path = os.path.join(UPLOAD_FOLDER, file.filename)
             file.save(input_path)
 
-            output_path = os.path.join(OUTPUT_FOLDER, 'stitched_output.tiff')
-            # Call run_end_to_end, do NOT assign its result to output_path
+            base_filename = os.path.splitext(file.filename)[0]
+            output_tiff_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_stitched.tif")
+            output_shp_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_detections.shp")
+
             run_end_to_end(
                 original_tiff_path=input_path,
                 sliced_dir='Sliced_Images',
                 detected_dir='Detected_Images',
-                output_tiff_path=output_path,
-                tile_size=(1026, 1824)
+                output_tiff_path=output_tiff_file,
+                output_shp_path=output_shp_file
             )
 
-            output_filename = os.path.basename(output_path)
+            output_filename = os.path.basename(output_tiff_file)
             return f"""
             Processing complete.<br>
             Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
