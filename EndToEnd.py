@@ -11,6 +11,7 @@ import json
 import csv
 import fiona
 from shapely.geometry import box, mapping
+import zipfile
 
 class ImageSlicer:
     def __init__(self, source, size, strides, padding=False):
@@ -309,6 +310,17 @@ def bboxes_json_to_shapefile(json_path, stitched_tiff_path, shapefile_path):
                 }
             })
 
+def zip_shapefile(output_folder, base_name, zip_name):
+    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
+    zip_path = os.path.join(output_folder, zip_name)
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for ext in exts:
+            fname = f"{base_name}.{ext}"
+            fpath = os.path.join(output_folder, fname)
+            if os.path.exists(fpath):
+                zipf.write(fpath, fname)
+    return zip_path
+
 app = Flask(__name__)
 
 UPLOAD_FOLDER = 'uploads'
@@ -343,12 +355,17 @@ def upload_file():
             )
             # ---------------------------------------------------
 
+            # --- Zip the shapefile components into a single ZIP file ---
+            zip_path = zip_shapefile(OUTPUT_FOLDER, 'bboxes_merged', 'bboxes_merged.zip')
+            # ---------------------------------------------------
+
             output_filename = os.path.basename(output_path)
             return f"""
             Processing complete.<br>
             Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
             Shapefile components:<br>
-            <a href='/download_shapefile'>Download Shapefile (all parts)</a>
+            <a href='/download_shapefile'>Download Shapefile (all parts)</a><br>
+            <a href='/download/bboxes_merged.zip'>Download Shapefile ZIP</a>
             """
 
     return '''

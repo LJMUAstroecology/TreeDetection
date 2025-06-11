@@ -8,3 +8,4 @@ json >=2.0.9
 csv.json  
 fiona>=1.8.20
 shapely>=1.7.1
+zipfile>=3.4
