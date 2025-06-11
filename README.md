@@ -1,6 +1,6 @@
 # TreeDetection
 
-A Python tool for processing large TIFF images by slicing them into smaller tiles, processing them, and stitching them back together while preserving metadata.
+A Python tool for processing large TIFF images by slicing them into smaller TIFF tiles, processing them, and stitching them back together while preserving metadata.
 
 ## Overview
 
@@ -17,7 +17,7 @@ This tool is designed to handle large TIFF images by breaking them down into man
 
 ## Requirements
 
-- Python 3.x
+- Python 3.10
 - Required packages:
   - numpy
   - PIL (Python Imaging Library)

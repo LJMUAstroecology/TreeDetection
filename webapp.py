@@ -60,13 +60,6 @@ def upload_file():
 def download_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
 
-@app.route('/download_shapefile')
-def download_shapefile():
-    # Shapefile consists of several files with the same basename
-    base = 'bboxes_merged'
-    zip_filename = f"{base}.zip"
-    zip_path = zip_shapefile(OUTPUT_FOLDER, base, zip_filename)
-    return send_from_directory(OUTPUT_FOLDER, zip_filename, as_attachment=True)
 
 if __name__ == '__main__':
     app.run(debug=True)
