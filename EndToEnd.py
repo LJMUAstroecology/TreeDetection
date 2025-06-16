@@ -90,7 +90,7 @@ def run_end_to_end(
     output_tiff_path,
     output_shp_path,
     tile_size=(512, 512),
-    model_path="best.pt",
+    model_path="last.pt",
     conf=0.3
 ):
     slice_geotiff_to_tiffs(

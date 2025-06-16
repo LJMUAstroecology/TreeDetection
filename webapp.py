@@ -40,11 +40,8 @@ def upload_file():
             return f"""
             <!doctype html>
             <title>Processing Complete</title>
-            <h1>Processing Complete!</h1>
+            <h1>Processing Complete, the result is available at your local outputs folder !</h1>
             <p>Your files have been generated:</p>
-            <ul>
-                <li><a href="/download/{tiff_dl_name}">Download Stitched GeoTIFF ({tiff_dl_name})</a></li>
-                <li><a href="/download/{shp_dl_name}">Download Detections Shapefile ({shp_dl_name})</a></li>
             </ul>
             <p>(Note: For the Shapefile to work, you need all its associated files like .shx, .dbf, etc., from the 'outputs' folder on the server)</p>
             <a href="/">Process another file</a>
