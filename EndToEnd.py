@@ -1,17 +1,16 @@
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import numpy as np
 from PIL import Image, ImageDraw
 import rasterio
 from rasterio.windows import Window
-from rasterio.transform import Affine
+from rasterio.merge import merge
 import fiona
 from shapely.geometry import Polygon, mapping
-from flask import Flask, request, send_from_directory
-
-# --- Utility Functions ---
+from ultralytics import YOLO
 
 def is_valid_tiff_filename(filename):
-    """Checks if a filename matches the tile format 'tile_{row}_{col}.tif'."""
     if not (filename.endswith('.tif') or filename.endswith('.tiff')):
         return False
     parts = os.path.splitext(filename)[0].split('_')
@@ -25,7 +24,6 @@ def is_valid_tiff_filename(filename):
     return True
 
 def slice_geotiff_to_tiffs(input_path, output_dir, tile_width, tile_height):
-    """Slices a large GeoTIFF into smaller, georeferenced GeoTIFF tiles."""
     print(f"Slicing {input_path} into tiles...")
     os.makedirs(output_dir, exist_ok=True)
     with rasterio.open(input_path) as src:
@@ -47,49 +45,11 @@ def slice_geotiff_to_tiffs(input_path, output_dir, tile_width, tile_height):
                     dst.write(tile_data)
     print(f"Slicing complete. Tiles saved to {output_dir}.")
 
-def detect_and_draw_boxes(tile_path, output_tile_path):
-    """
-    Simulates detection on a tile, draws the boxes on it, and returns their pixel coordinates.
-    """
-    with rasterio.open(tile_path) as src:
-        data = src.read()
-        meta = src.meta.copy()
-        tile_height, tile_width = src.height, src.width
-
-    img = np.moveaxis(data, 0, -1).astype(np.uint8)
-    pil_img = Image.fromarray(img)
-    draw = ImageDraw.Draw(pil_img)
-    detected_boxes = []
-
-    if tile_width <= 50 or tile_height <= 50:
-        with rasterio.open(output_tile_path, "w", **meta) as dst:
-            dst.write(data)
-        return []
-
-    num_detections = np.random.randint(2, 6)
-    for _ in range(num_detections):
-        box_width = np.random.randint(20, 50)
-        box_height = np.random.randint(20, 50)
-        x1 = np.random.randint(0, tile_width - box_width)
-        y1 = np.random.randint(0, tile_height - box_height)
-        x2 = x1 + box_width
-        y2 = y1 + box_height
-        draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
-        detected_boxes.append([x1, y1, x2, y2])
-
-    img_with_boxes = np.array(pil_img)
-    data_out = np.moveaxis(img_with_boxes, -1, 0)
-    with rasterio.open(output_tile_path, "w", **meta) as dst:
-        dst.write(data_out)
-    return detected_boxes
-
 def stitch_tiff_tiles(input_dir, output_path):
-    """Stitches georeferenced tiles from a directory back into a single GeoTIFF."""
     print(f"Stitching tiles from {input_dir}...")
     tile_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if is_valid_tiff_filename(f)]
     if not tile_files:
         raise ValueError("No valid TIFF tiles found to stitch.")
-    from rasterio.merge import merge
     src_files_to_mosaic = [rasterio.open(path) for path in tile_files]
     mosaic, out_trans = merge(src_files_to_mosaic)
     out_meta = src_files_to_mosaic[0].meta.copy()
@@ -106,7 +66,6 @@ def stitch_tiff_tiles(input_dir, output_path):
     print(f"Stitched TIFF saved to {output_path}")
 
 def create_merged_shp(features, crs, output_shp_path):
-    """Writes a list of geographic features to a single, merged Shapefile."""
     print(f"Creating Shapefile with {len(features)} features...")
     schema = {'geometry': 'Polygon', 'properties': {'id': 'int'}}
     with fiona.open(
@@ -115,30 +74,73 @@ def create_merged_shp(features, crs, output_shp_path):
         collection.writerecords(features)
     print(f"Shapefile '{output_shp_path}' created successfully.")
 
+def detect_boxes_with_yolo(model, image_path, conf=0.3):
+    results = model.predict(source=image_path, conf=conf, save=False)
+    boxes = []
+    for result in results:
+        for box in result.boxes.xyxy.cpu().numpy():
+            x1, y1, x2, y2 = map(int, box[:4])
+            boxes.append([x1, y1, x2, y2])
+    return boxes
+
 def run_end_to_end(
     original_tiff_path,
     sliced_dir,
     detected_dir,
     output_tiff_path,
     output_shp_path,
-    tile_size=(512, 512)
+    tile_size=(512, 512),
+    model_path="best.pt",
+    conf=0.3
 ):
-    """Main script containing all the processing logic."""
     slice_geotiff_to_tiffs(
         input_path=original_tiff_path,
         output_dir=sliced_dir,
         tile_width=tile_size[1],
         tile_height=tile_size[0]
     )
-    print("Processing tiles: detecting and drawing boxes...")
+
+    model = YOLO(model_path)
+
     os.makedirs(detected_dir, exist_ok=True)
+    tile_files = [f for f in os.listdir(sliced_dir) if is_valid_tiff_filename(f)]
+
     all_geo_features = []
     feature_id = 0
-    tile_files = [f for f in os.listdir(sliced_dir) if is_valid_tiff_filename(f)]
+
     for tile_filename in tile_files:
         tile_path = os.path.join(sliced_dir, tile_filename)
         output_tile_path = os.path.join(detected_dir, tile_filename)
-        local_pixel_boxes = detect_and_draw_boxes(tile_path, output_tile_path)
+
+        # Read and convert to RGB if needed
+        with rasterio.open(tile_path) as src:
+            data = src.read()
+            meta = src.meta.copy()
+            if data.shape[0] > 3:
+                data = data[:3, :, :]
+            img = np.moveaxis(data, 0, -1).astype(np.uint8)
+            pil_img = Image.fromarray(img)
+            temp_jpg = os.path.join(detected_dir, f"{os.path.splitext(tile_filename)[0]}.jpg")
+            pil_img.save(temp_jpg)
+
+        # YOLO detection
+        local_pixel_boxes = detect_boxes_with_yolo(model, temp_jpg, conf=conf)
+
+        # Draw boxes
+        draw = ImageDraw.Draw(pil_img)
+        for box in local_pixel_boxes:
+            draw.rectangle(box, outline="red", width=3)
+        img_with_boxes = np.array(pil_img)
+        data_out = np.moveaxis(img_with_boxes, -1, 0)
+        # Update meta to match the number of bands
+        meta.update(count=data_out.shape[0])
+        with rasterio.open(output_tile_path, "w", **meta) as dst:
+            dst.write(data_out)
+
+        # Clean up temp file
+        os.remove(temp_jpg)
+
+        # Collect features for shapefile
         with rasterio.open(tile_path) as tile_src:
             transform = tile_src.transform
             for box in local_pixel_boxes:
@@ -154,76 +156,11 @@ def run_end_to_end(
                 }
                 all_geo_features.append(feature)
                 feature_id += 1
+
     stitch_tiff_tiles(detected_dir, output_tiff_path)
+
     with rasterio.open(original_tiff_path) as src:
         original_crs = src.crs
     create_merged_shp(all_geo_features, original_crs, output_shp_path)
+
     print(f"End-to-end process complete. Outputs saved to {output_tiff_path} and {output_shp_path}")
-
-# --- Flask App ---
-app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'outputs'
-SLICED_DIR = 'sliced_tiles'
-DETECTED_DIR = 'detected_tiles'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-os.makedirs(SLICED_DIR, exist_ok=True)
-os.makedirs(DETECTED_DIR, exist_ok=True)
-
-@app.route('/', methods=['GET', 'POST'])
-def upload_page():
-    if request.method == 'POST':
-        if 'file' not in request.files or request.files['file'].filename == '':
-            return "No file selected. Please go back and select a TIFF file."
-        file = request.files['file']
-        if file and (file.filename.endswith('.tif') or file.filename.endswith('.tiff')):
-            input_path = os.path.join(UPLOAD_FOLDER, file.filename)
-            file.save(input_path)
-            base_filename = os.path.splitext(file.filename)[0]
-            output_tiff_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_stitched.tif")
-            output_shp_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_detections.shp")
-
-            # --- All required arguments are provided here ---
-            run_end_to_end(
-                original_tiff_path=input_path,
-                sliced_dir=SLICED_DIR,
-                detected_dir=DETECTED_DIR,
-                output_tiff_path=output_tiff_file,
-                output_shp_path=output_shp_file
-            )
-            # ------------------------------------------------
-
-            tiff_dl_name = os.path.basename(output_tiff_file)
-            shp_dl_name = os.path.basename(output_shp_file)
-            return f"""
-            <!doctype html>
-            <title>Processing Complete</title>
-            <h1>Processing Complete!</h1>
-            <p>Your files have been generated:</p>
-            <ul>
-                <li><a href="/download/{tiff_dl_name}">Download Stitched GeoTIFF ({tiff_dl_name})</a></li>
-                <li><a href="/download/{shp_dl_name}">Download Detections Shapefile ({shp_dl_name})</a></li>
-            </ul>
-            <p>(Note: For the Shapefile to work, you need all its associated files like .shx, .dbf, etc., from the 'outputs' folder on the server)</p>
-            <a href="/">Process another file</a>
-            """
-    return '''
-    <!doctype html>
-    <title>Upload TIFF</title>
-    <h1>Upload a GeoTIFF for Processing</h1>
-    <p>This tool will slice the image, simulate object detection, and generate two outputs:
-    <br>1. A stitched GeoTIFF with detection boxes drawn on it.
-    <br>2. A Shapefile of the detection boxes.</p>
-    <form method=post enctype=multipart/form-data>
-      <input type=file name=file accept=".tif,.tiff">
-      <input type=submit value=Start Processing>
-    </form>
-    '''
-
-@app.route('/download/<filename>')
-def download_file(filename):
-    return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
-
-if __name__ == '__main__':
-    app.run(debug=True)

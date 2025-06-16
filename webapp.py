@@ -1,60 +1,64 @@
 from flask import Flask, request, send_from_directory
 import os
 from EndToEnd import run_end_to_end
-import zipfile
 
 app = Flask(__name__)
 
 UPLOAD_FOLDER = 'uploads'
 OUTPUT_FOLDER = 'outputs'
+SLICED_DIR = 'sliced_tiles'
+DETECTED_DIR = 'detected_tiles'
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-def zip_shapefile(output_folder, base_name, zip_name):
-    exts = ['shp', 'shx', 'dbf', 'prj', 'cpg']
-    zip_path = os.path.join(output_folder, zip_name)
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for ext in exts:
-            fname = f"{base_name}.{ext}"
-            fpath = os.path.join(output_folder, fname)
-            if os.path.exists(fpath):
-                zipf.write(fpath, fname)
-    return zip_path
+os.makedirs(SLICED_DIR, exist_ok=True)
+os.makedirs(DETECTED_DIR, exist_ok=True)
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
     if request.method == 'POST':
+        if 'file' not in request.files or request.files['file'].filename == '':
+            return "No file selected. Please go back and select a TIFF file."
         file = request.files['file']
-        if file:
+        if file and (file.filename.endswith('.tif') or file.filename.endswith('.tiff')):
             input_path = os.path.join(UPLOAD_FOLDER, file.filename)
             file.save(input_path)
-
             base_filename = os.path.splitext(file.filename)[0]
             output_tiff_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_stitched.tif")
             output_shp_file = os.path.join(OUTPUT_FOLDER, f"{base_filename}_detections.shp")
 
             run_end_to_end(
                 original_tiff_path=input_path,
-                sliced_dir='Sliced_Images',
-                detected_dir='Detected_Images',
+                sliced_dir=SLICED_DIR,
+                detected_dir=DETECTED_DIR,
                 output_tiff_path=output_tiff_file,
                 output_shp_path=output_shp_file
             )
 
-            output_filename = os.path.basename(output_tiff_file)
+            tiff_dl_name = os.path.basename(output_tiff_file)
+            shp_dl_name = os.path.basename(output_shp_file)
             return f"""
-            Processing complete.<br>
-            Output saved to <a href='/download/{output_filename}'>{output_filename}</a><br>
-            Shapefile: <a href='/download_shapefile_zip'>Download All Shapefile Components (ZIP)</a>
+            <!doctype html>
+            <title>Processing Complete</title>
+            <h1>Processing Complete!</h1>
+            <p>Your files have been generated:</p>
+            <ul>
+                <li><a href="/download/{tiff_dl_name}">Download Stitched GeoTIFF ({tiff_dl_name})</a></li>
+                <li><a href="/download/{shp_dl_name}">Download Detections Shapefile ({shp_dl_name})</a></li>
+            </ul>
+            <p>(Note: For the Shapefile to work, you need all its associated files like .shx, .dbf, etc., from the 'outputs' folder on the server)</p>
+            <a href="/">Process another file</a>
             """
-
     return '''
     <!doctype html>
     <title>Upload TIFF</title>
-    <h1>Upload a TIFF file</h1>
+    <h1>Upload a GeoTIFF for Processing</h1>
+    <p>This tool will slice the image, run YOLO detection, and generate two outputs:
+    <br>1. A stitched GeoTIFF with detection boxes drawn on it.
+    <br>2. A Shapefile of the detection boxes.</p>
     <form method=post enctype=multipart/form-data>
-      <input type=file name=file>
-      <input type=submit value=Upload>
+      <input type=file name=file accept=".tif,.tiff">
+      <input type=submit value=Start Processing>
     </form>
     '''
 
@@ -62,6 +66,5 @@ def upload_file():
 def download_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
