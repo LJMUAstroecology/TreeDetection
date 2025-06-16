@@ -1,5 +1,7 @@
-numpy>=1.21.0
-Pillow>=9.0.0
-tifffile>=2021.7.2
-matplotlib>=3.4.0 
-rasterio>=1.2.6
+flask
+numpy
+pillow
+rasterio
+fiona
+shapely
+ultralytics
