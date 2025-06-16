@@ -9,4 +9,7 @@ stitched_output.tiff.aux.xml
 Detected_Images/
 Sliced_images/
 sliced_tiles/
+detected_tiles/
+temp/
+
 
