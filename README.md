@@ -1,19 +1,20 @@
 # TreeDetection
 
-A Python tool for processing large TIFF images by slicing them into smaller TIFF tiles, processing them, and stitching them back together while preserving metadata.
+A Python tool for processing large GeoTIFF images by slicing them into smaller tiles, running YOLO object detection, and generating both a stitched output image and a shapefile of detections.
 
 ## Overview
 
-This tool is designed to handle large TIFF images by breaking them down into manageable tiles, allowing for processing of individual sections, and then reassembling them into a complete image. It's particularly useful for processing large aerial or satellite imagery where memory constraints might be an issue.
+This tool is designed to handle large GeoTIFF images by breaking them down into manageable tiles, running YOLO object detection on each tile, and then reassembling them into a complete image. It also generates a shapefile containing the geographic coordinates of all detections. The tool can be used either through a command-line interface or a web interface.
 
 ## Features
 
-- Slice large TIFF images into smaller tiles
-- Customizable tile size and stride parameters
-- Optional padding for edge cases
-- Preserve original TIFF metadata
-- Support for processing individual tiles
-- Automatic stitching of processed tiles back into a complete TIFF
+- Slice large GeoTIFF images into smaller tiles
+- Run YOLO object detection on each tile
+- Draw detection boxes on the processed images
+- Generate a shapefile of detection coordinates
+- Preserve original GeoTIFF metadata and coordinate system
+- Web interface for easy file upload and processing
+- Command-line interface for batch processing
 
 ## Requirements
 
@@ -21,8 +22,11 @@ This tool is designed to handle large TIFF images by breaking them down into man
 - Required packages:
   - numpy
   - PIL (Python Imaging Library)
-  - tifffile
-  - matplotlib
+  - rasterio
+  - fiona
+  - shapely
+  - ultralytics (YOLO)
+  - flask (for web interface)
 
 ## Installation
 
@@ -36,7 +40,7 @@ This tool is designed to handle large TIFF images by breaking them down into man
 
 1. Create a new conda environment:
    ```bash
-   conda create -n TreeDetection python=3.9
+   conda create -n TreeDetection python=3.10
    ```
 
 2. Activate the environment:
@@ -51,65 +55,66 @@ This tool is designed to handle large TIFF images by breaking them down into man
 
 ## Usage
 
-The main script `EndToEnd.py` provides a complete pipeline for image processing:
+### Web Interface
 
-1. **Image Slicing**: The `ImageSlicer` class handles the slicing of large TIFF images into smaller tiles.
-   ```python
-   slicer = ImageSlicer(
-       source='path/to/image.tif',
-       size=(1026, 1824),  # Tile size
-       strides=(926, 1724),  # Stride between tiles
-       padding=False  # Optional padding
-   )
-   transformed_images = slicer.transform()
+1. Start the web server:
+   ```bash
+   python webapp.py
    ```
 
-2. **Processing Tiles**: Each tile can be processed individually. The script includes an example of injecting fake detections, but this can be replaced with your own processing logic.
+2. Open your web browser and navigate to `http://localhost:5000`
+3. Upload a GeoTIFF file through the web interface
+4. The tool will process the image and provide download links for:
+   - The stitched GeoTIFF with detection boxes
+   - The shapefile containing detection coordinates
 
-3. **Stitching**: The processed tiles are stitched back together into a complete TIFF image, preserving the original metadata.
+### Command Line Interface
+
+The main script `EndToEnd.py` provides a complete pipeline for image processing:
+
+```python
+from EndToEnd import run_end_to_end
+
+run_end_to_end(
+    original_tiff_path='path/to/input.tif',
+    sliced_dir='sliced_tiles',
+    detected_dir='detected_tiles',
+    output_tiff_path='outputs/stitched_output.tif',
+    output_shp_path='outputs/detections.shp',
+    tile_size=(512, 512),  # Optional: customize tile size
+    model_path='best.pt',  # Optional: specify YOLO model
+    conf=0.3  # Optional: detection confidence threshold
+)
+```
 
 ## File Structure
 
-- `EndToEnd.py`: Main script containing all the processing logic
-- `Sliced_Images/`: Directory for storing sliced image tiles
-- `Detected_Images/`: Directory for storing processed image tiles
-- `stitched_output.tiff`: Final output file
+- `EndToEnd.py`: Main processing script
+- `webapp.py`: Web interface implementation
+- `best.pt`: YOLO model weights
+- `uploads/`: Directory for uploaded files
+- `outputs/`: Directory for final output files
+- `sliced_tiles/`: Directory for intermediate sliced tiles
+- `detected_tiles/`: Directory for processed tiles with detections
 
-## Configuration
+## Output Files
 
-The script uses the following default parameters:
-- Tile size: 1026x1824 pixels
-- Stride: 926x1724 pixels
-- Input: TIFF format
-- Output: TIFF format with preserved metadata
+1. **Stitched GeoTIFF**: Contains the original image with detection boxes drawn on it
+   - Preserves all original GeoTIFF metadata
+   - Maintains the original coordinate system
+   - Detection boxes are drawn in red
 
-## Example
-
-```python
-# Define paths
-original_tiff_path = 'path/to/input.tif'
-sliced_dir = 'Sliced_Images'
-detected_dir = 'Detected_Images'
-output_tiff_path = 'stitched_output.tiff'
-
-# Create slicer instance
-slicer = ImageSlicer(original_tiff_path, size=(1026, 1824), strides=(926, 1724), padding=False)
-transformed_images = slicer.transform()
-
-# Process and stitch images
-# ... (processing steps) ...
-
-# Stitch the images back into a TIFF
-stitch_images_to_tiff(detected_dir, output_tiff_path, original_tiff_path, 
-                     tile_size=(1026, 1824), strides=(926, 1724))
-```
+2. **Shapefile**: Contains the geographic coordinates of all detections
+   - Includes .shp, .shx, .dbf, and .prj files
+   - Uses the same coordinate system as the input GeoTIFF
+   - Each detection is stored as a polygon feature
 
 ## Notes
 
-- The script includes a sample detection injection function (`inject_fake_detections`) that can be replaced with your own processing logic
-- File naming convention for tiles: `image_row_column.png`
-- The stitching process preserves the original TIFF metadata
+- The tool uses YOLO for object detection, which requires a trained model (provided as `best.pt`)
 - Make sure to have sufficient disk space for the intermediate files
+- The web interface is intended for development/testing; for production use, consider adding proper security measures
+- The shapefile output requires all associated files (.shp, .shx, .dbf, .prj) to be used properly in GIS software
 
 ## License: TBD
 
